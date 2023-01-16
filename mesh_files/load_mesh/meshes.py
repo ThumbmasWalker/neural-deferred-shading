@@ -38,12 +38,12 @@ def load_mesh(path):
 
 # load in all the mesh files
 MESHES = {
-    0: load_mesh("..\\icosphere_0.pkl"),
-    1: load_mesh("..\\icosphere_1.pkl"),
-    2: load_mesh("..\\icosphere_2.pkl"),
-    3: load_mesh("..\\icosphere_3.pkl"),
-    4: load_mesh("..\\icosphere_4.pkl"),
-    5: load_mesh("..\\icosphere_5.pkl"),
-    6: load_mesh("..\\icosphere_6.pkl"),
-    7: load_mesh("..\\icosphere_7.pkl"),
+    0: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_0.pkl"),
+    1: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_1.pkl"),
+    2: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_2.pkl"),
+    3: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_0.pkl"),
+    4: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_0.pkl"),
+    5: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_0.pkl"),
+    6: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_0.pkl"),
+    7: load_mesh("/content/neural-deferred-shading/mesh_files/icosphere_0.pkl"),
 }

@@ -75,6 +75,12 @@ if __name__ == '__main__':
     meshes_save_path.mkdir(parents=True, exist_ok=True)
     shaders_save_path.mkdir(parents=True, exist_ok=True)
 
+    mesh = MESHES[1]
+    mesh_ico = Mesh(mesh['V'], mesh['F'], device=device)
+    mesh_for_writing = mesh_ico.detach().to('cpu')
+    write_mesh(meshes_save_path / f"mesh_test.obj", mesh_for_writing)      
+    exit(-1)
+
     # Save args for this execution
     with open(experiment_dir / "args.txt", "w") as text_file:
         print(f"{args}", file=text_file)
