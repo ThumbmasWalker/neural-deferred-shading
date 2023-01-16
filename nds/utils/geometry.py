@@ -186,6 +186,25 @@ def create_coordinate_grid(size: int, scale: float = 1.0, device: torch.device =
 
     return grid * scale
 
+def create_uv_coordinate_grid(size: int, scale: float = 1.0, device: torch.device = 'cpu') -> torch.tensor:
+    """ Create 2d grid of coordinates, [-scale, scale]^3.
+
+    Args:
+        size: Number of grid samples in each dimension.
+        scale: Scaling factor applied to the grid coordinates.
+        device: Device of the returned grid.
+
+    Returns:
+        Grid as tensor with shape (H, W, 2).
+    """
+
+    grid = torch.stack(torch.meshgrid(
+        torch.linspace(-1.0, 1.0, size, device=device),
+        torch.linspace(-1.0, 1.0, size, device=device)
+    ), dim=-1)
+
+    return grid * scale
+
 def marching_cubes(voxel_grid: torch.tensor, voxel_occupancy: torch.tensor, level: float = 0.5, **kwargs) -> Tuple[torch.tensor, torch.IntTensor]:
     """ Compute the marching cubes surface from an occupancy grid.
 

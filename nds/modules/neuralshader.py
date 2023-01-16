@@ -96,13 +96,9 @@ class NeuralExplicit(torch.nn.Module):
 
         super().__init__()
         self.fourier_feature_transform = None
-        
-        if fourier_features == 'None':
      
-            self.mlp = FC(2, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
+        self.mlp = FC(2, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
             
-        
-        
         # Store the config
         
         self._config = {

@@ -4,6 +4,12 @@ import numpy as np
 from pathlib import Path
 from pyremesh import remesh_botsch
 import torch
+from torch.nn import Module
+from torch.nn import Linear
+from torch.nn.init import kaiming_uniform_
+from torch.nn import ReLU
+from torch.nn import Sigmoid
+from torch.nn.init import xavier_uniform_
 from tqdm import tqdm
 
 from nds.core import (
@@ -13,10 +19,10 @@ from nds.losses import (
     mask_loss, normal_consistency_loss, laplacian_loss, shading_loss
 )
 from nds.modules import (
-    SpaceNormalization, NeuralShader, ViewSampler
+    SpaceNormalization, NeuralShader, NeuralExplicit, ViewSampler
 )
 from nds.utils import (
-    AABB, read_views, read_mesh, write_mesh, visualize_mesh_as_overlay, visualize_views, generate_mesh, mesh_generator_names
+    AABB, read_views, read_mesh, write_mesh, visualize_mesh_as_overlay, visualize_views, generate_mesh, mesh_generator_names, create_uv_coordinate_grid
 )
 
 if __name__ == '__main__':
@@ -45,6 +51,7 @@ if __name__ == '__main__':
     parser.add_argument('--fourier_features', type=str, default='positional', choices=(['none', 'gfft', 'positional']), help="Input encoding used in the neural shader")
     parser.add_argument('--activation', type=str, default='relu', choices=(['relu', 'sine']), help="Activation function used in the neural shader")
     parser.add_argument('--fft_scale', type=int, default=4, help="Scale parameter of frequency-based input encodings in the neural shader")
+    parser.add_argument('--uv_samps', type=int, default=100, help="Number of samples in UV space")
 
     # Add module arguments
     ViewSampler.add_arguments(parser)
@@ -74,6 +81,93 @@ if __name__ == '__main__':
 
     # Read the views
     views = read_views(args.input_dir, scale=args.image_scale, device=device)
+
+    # Neural Explicit Rep
+
+    class MLP(Module):
+        def __init__(self, n_inputs):
+            super(MLP, self).__init__()
+            # First hidden layer
+            self.hidden1 = Linear(n_inputs, 10)
+            kaiming_uniform_(self.hidden1.weight, nonlinearity='relu')
+            self.act1 = ReLU()
+            # Second hidden layer
+            self.hidden2 = Linear(10, 10)
+            kaiming_uniform_(self.hidden2.weight, nonlinearity='relu')
+            self.act2 = ReLU()
+            # Third hidden layer
+            self.hidden3 = Linear(10,3)
+            xavier_uniform_(self.hidden3.weight)
+            self.act3 = Sigmoid()
+        def forward(self, X):
+            #Input to the first hidden layer
+            X = self.hidden1(X)
+            X = self.act1(X)
+            # Second hidden layer
+            X = self.hidden2(X)
+            X = self.act2(X)
+            # Third hidden layer
+            X = self.hidden3(X)
+            X = self.act3(X)
+            return X
+
+
+
+    #ner = NeuralExplicit(hidden_features_layers=args.hidden_features_layers,
+    #                      hidden_features_size=10,
+    #                      fourier_features=args.fourier_features,
+    #                      activation=args.activation,
+    #                      fft_scale=args.fft_scale,
+    #                      last_activation=torch.nn.ReLU, 
+    #                      device=device)
+
+    ner = MLP(2).to(device)
+
+    # Get uv coordinate grid for neural input
+    uv_grid = create_uv_coordinate_grid(args.uv_samps, scale=0.1, device=device)
+    uv_grid = uv_grid.view(1, -1 , 2).squeeze()
+    verts = ner(uv_grid)
+    print(verts.shape)
+    # Compute Faces/Triangles
+    top_triangle_idx = torch.arange(0, args.uv_samps * (args.uv_samps - 1))
+    top_triangle_idx = torch.stack(
+        [
+            top_triangle_idx,
+            top_triangle_idx + 1,
+            top_triangle_idx + args.uv_samps + 1,
+        ],
+        dim=-1,
+    )
+
+    bottom_triangle_idx = top_triangle_idx[:, [0, 2, 1]] + torch.tensor(
+        [0, 0, args.uv_samps - 1]
+    )
+
+    faces = torch.zeros(
+        (1, len(top_triangle_idx) + len(bottom_triangle_idx), 3),
+        dtype=torch.long,
+        device=device,
+    )
+    faces[0, ::2] = top_triangle_idx
+    faces[0, 1::2] = bottom_triangle_idx
+
+    # construct range of indices that excludes the boundary to avoid wrong triangles
+    indexing_range = torch.arange(0, 2 * args.uv_samps * args.uv_samps).view(
+        args.uv_samps, args.uv_samps, 2
+    )
+    indexing_range = indexing_range[:-1, :-1]  # removes boundaries from list of indices
+    indexing_range = indexing_range.reshape(
+        2 * (args.uv_samps - 1) * (args.uv_samps - 1)
+    )
+
+    # Faces of checkerboard mesh
+    faces = faces[:, indexing_range].squeeze()
+    print(faces.shape)
+
+    mesh_initial = Mesh(verts, faces, device=device)
+    mesh_for_writing = mesh_initial.detach().to('cpu')
+    write_mesh(meshes_save_path / f"mesh_test.obj", mesh_for_writing)                                
+    exit(-1)
 
     # Obtain the initial mesh and compute its connectivity
     mesh_initial: Mesh = None
