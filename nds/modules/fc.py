@@ -158,3 +158,56 @@ class FC(nn.Module):
 
     def forward(self, x):
         return self.network(x)
+
+class FC_res(nn.Module):
+    def __init__(self, in_features, out_features, hidden_features: List[int], activation='relu', last_activation=None, bias=True, first_omega=30, hidden_omega=30.0):
+        super().__init__()
+
+        layers = []
+
+        activations_and_inits = {
+            'sine': (Sine(first_omega),
+                     siren_init,
+                     siren_init_first,
+                     None),
+            'relu': (nn.ReLU(inplace=True),
+                     init_weights_normal,
+                     init_weights_normal,
+                     None),
+            'relu2': (nn.ReLU(inplace=True),
+                     init_weights_normal,
+                     init_weights_normal,
+                     init_weights_normal_last),
+            'softplus': (nn.Softplus(),
+                        init_weights_normal,
+                        None)
+        }
+
+        activation_fn, weight_init, first_layer_init, last_layer_init = activations_and_inits[activation]
+
+
+        # First layer
+        layer = FullyConnectedBlock(in_features, hidden_features[0], bias=bias, activation=activation_fn)
+        if first_layer_init is not None: 
+            layer.apply(lambda module: first_layer_init(module=module, n=in_features))
+        layers.append(layer)
+
+        for i in range(len(hidden_features)):
+            n = hidden_features[i]
+
+            # Initialize the layer right away
+            layer = FullyConnectedBlock(n, n, bias=bias, activation=activation_fn)
+            layer.apply(lambda module: weight_init(module=module, n=n, omega=hidden_omega))
+            layers.append(layer)
+
+        # Last layer
+        layer = FullyConnectedBlock(hidden_features[-1], out_features, bias=bias, activation=last_activation)
+        layer.apply(lambda module: weight_init(module=module, n=hidden_features[-1], omega=hidden_omega))
+        if last_layer_init is not None: 
+            layer.apply(lambda module: last_layer_init(module=module, n=in_features))
+        layers.append(layer)
+
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.network(x)*0.1 + x

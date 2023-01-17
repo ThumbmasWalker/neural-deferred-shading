@@ -1,5 +1,5 @@
 
-from nds.modules.fc import FC
+from nds.modules.fc import FC, FC_res
 from nds.modules.gfft import GaussianFourierFeatureTransform
 from nds.modules.embedder import get_embedder
 
@@ -96,9 +96,14 @@ class NeuralExplicit(torch.nn.Module):
 
         super().__init__()
         self.fourier_feature_transform = None
-     
-        self.mlp = FC(2, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
-            
+        
+        if fourier_features == 'positional':
+            print("positional encoding enabled")
+            self.fourier_feature_transform, channels = get_embedder(fft_scale)
+            self.mlp = FC(channels, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
+        else:    
+            self.mlp = FC(3, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
+
         # Store the config
         
         self._config = {
@@ -120,8 +125,10 @@ class NeuralExplicit(torch.nn.Module):
         #else:
         #    h = self.diffuse(position)
         #    h = torch.cat([h, normal, view_dir], dim=-1)
-
-        return self.mlp(coords)
+        if self.fourier_feature_transform is not None:
+            return self.mlp(self.fourier_feature_transform(coords))*0.1 + coords
+        else: 
+            return self.mlp(coords)*0.1 + coords
 
     @classmethod
     def load(cls, path, device='cpu'):

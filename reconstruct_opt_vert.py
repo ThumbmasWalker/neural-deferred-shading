@@ -11,6 +11,7 @@ from torch.nn import ReLU
 from torch.nn import Sigmoid
 from torch.nn.init import xavier_uniform_
 from tqdm import tqdm
+from mesh_files.load_mesh import MESHES
 
 from nds.core import (
     Mesh, Renderer
@@ -75,12 +76,6 @@ if __name__ == '__main__':
     meshes_save_path.mkdir(parents=True, exist_ok=True)
     shaders_save_path.mkdir(parents=True, exist_ok=True)
 
-    mesh = MESHES[1]
-    mesh_ico = Mesh(mesh['V'], mesh['F'], device=device)
-    mesh_for_writing = mesh_ico.detach().to('cpu')
-    write_mesh(meshes_save_path / f"mesh_test.obj", mesh_for_writing)      
-    exit(-1)
-
     # Save args for this execution
     with open(experiment_dir / "args.txt", "w") as text_file:
         print(f"{args}", file=text_file)
@@ -89,7 +84,7 @@ if __name__ == '__main__':
     views = read_views(args.input_dir, scale=args.image_scale, device=device)
 
     # Neural Explicit Rep
-
+    '''
     class MLP(Module):
         def __init__(self, n_inputs):
             super(MLP, self).__init__()
@@ -119,13 +114,13 @@ if __name__ == '__main__':
 
 
 
-    #ner = NeuralExplicit(hidden_features_layers=args.hidden_features_layers,
-    #                      hidden_features_size=10,
-    #                      fourier_features=args.fourier_features,
-    #                      activation=args.activation,
-    #                      fft_scale=args.fft_scale,
-    #                      last_activation=torch.nn.ReLU, 
-    #                      device=device)
+    ner = NeuralExplicit(hidden_features_layers=args.hidden_features_layers,
+                          hidden_features_size=10,
+                          fourier_features=args.fourier_features,
+                          activation=args.activation,
+                          fft_scale=args.fft_scale,
+                          last_activation=torch.nn.ReLU, 
+                          device=device)
 
     ner = MLP(2).to(device)
 
@@ -173,18 +168,19 @@ if __name__ == '__main__':
     mesh_initial = Mesh(verts, faces, device=device)
     mesh_for_writing = mesh_initial.detach().to('cpu')
     write_mesh(meshes_save_path / f"mesh_test.obj", mesh_for_writing)                                
-    exit(-1)
-
+    exit(-1)'''
+    mesh = MESHES[4]
+    mesh_initial = Mesh(mesh['V'], mesh['F'], device=device)
     # Obtain the initial mesh and compute its connectivity
-    mesh_initial: Mesh = None
-    if args.initial_mesh in mesh_generator_names:
-        # Use args.initial_mesh as mesh generator name
-        if args.input_bbox is None:
-            raise RuntimeError("Generated meshes require a bounding box.")
-        mesh_initial = generate_mesh(args.initial_mesh, views, AABB.load(args.input_bbox), device=device)
-    else:
-        # Use args.initial_mesh as path to the mesh
-        mesh_initial = read_mesh(args.initial_mesh, device=device)
+    #mesh_initial: Mesh = None
+    #if args.initial_mesh in mesh_generator_names:
+    #    # Use args.initial_mesh as mesh generator name
+    #    if args.input_bbox is None:
+    #        raise RuntimeError("Generated meshes require a bounding box.")
+    #    mesh_initial = generate_mesh(args.initial_mesh, views, AABB.load(args.input_bbox), device=device)
+    #else:
+    #    # Use args.initial_mesh as path to the mesh
+    #    mesh_initial = read_mesh(args.initial_mesh, device=device)
     mesh_initial.compute_connectivity()
 
     # Load the bounding box or create it from the mesh vertices
@@ -198,7 +194,7 @@ if __name__ == '__main__':
     # a 2-cube centered at (0, 0, 0), to the views, the mesh, and the bounding box
     space_normalization = SpaceNormalization(aabb.corners)
     views = space_normalization.normalize_views(views)
-    mesh_initial = space_normalization.normalize_mesh(mesh_initial)
+    #mesh_initial = space_normalization.normalize_mesh(mesh_initial)
     aabb = space_normalization.normalize_aabb(aabb)
 
     # Configure the renderer
@@ -217,8 +213,21 @@ if __name__ == '__main__':
     lr_vertices = args.lr_vertices
     #vertex_offsets = torch.zeros_like(mesh_initial.vertices)
     #vertex_offsets.requires_grad = True
-    mesh_initial.vertices.requires_grad = True
-    optimizer_vertices = torch.optim.Adam([mesh_initial.vertices], lr=lr_vertices)
+
+    ner = NeuralExplicit(hidden_features_layers=args.hidden_features_layers,
+                          hidden_features_size=256,
+                          fourier_features=args.fourier_features,
+                          activation=args.activation,
+                          fft_scale=args.fft_scale,
+                          last_activation=torch.nn.ReLU, 
+                          device=device)
+    
+    
+    #mesh_for_writing = mesh_new.detach().to('cpu')
+    #write_mesh(meshes_save_path / f"mesh_test_ner.obj", mesh_for_writing)
+    #exit(-1)
+
+    optimizer_vertices = torch.optim.Adam(ner.parameters(), lr=lr_vertices)
 
     # Create the optimizer for the neural shader
     shader = NeuralShader(hidden_features_layers=args.hidden_features_layers,
@@ -245,13 +254,16 @@ if __name__ == '__main__':
 
         if iteration in args.upsample_iterations:
             # Upsample the mesh by remeshing the surface with half the average edge length
-            e0, e1 = mesh.edges.unbind(1)
-            average_edge_length = torch.linalg.norm(mesh.vertices[e0] - mesh.vertices[e1], dim=-1).mean()
-            v_upsampled, f_upsampled = remesh_botsch(mesh.vertices.cpu().detach().numpy().astype(np.float64), mesh.indices.cpu().numpy().astype(np.int32), h=float(average_edge_length/2))
-            v_upsampled = np.ascontiguousarray(v_upsampled)
-            f_upsampled = np.ascontiguousarray(f_upsampled)
-
-            mesh_initial = Mesh(v_upsampled, f_upsampled, device=device)
+            # e0, e1 = mesh.edges.unbind(1)
+            # average_edge_length = torch.linalg.norm(mesh.vertices[e0] - mesh.vertices[e1], dim=-1).mean()
+            # v_upsampled, f_upsampled = remesh_botsch(mesh.vertices.cpu().detach().numpy().astype(np.float64), mesh.indices.cpu().numpy().astype(np.int32), h=float(average_edge_length/2))
+            # v_upsampled = np.ascontiguousarray(v_upsampled)
+            # f_upsampled = np.ascontiguousarray(f_upsampled)
+            mesh_lvls = {args.upsample_iterations[0]:5, 
+                         args.upsample_iterations[1]:6, 
+                         args.upsample_iterations[2]:7}
+            mesh = MESHES[mesh_lvls[iteration]]
+            mesh_initial = Mesh(mesh['V'], mesh['F'], device=device)
             mesh_initial.compute_connectivity()
 
             # Adjust weights and step size
@@ -262,13 +274,14 @@ if __name__ == '__main__':
             # Create a new optimizer for the vertex offsets
             #vertex_offsets = torch.zeros_like(mesh_initial.vertices)
             #vertex_offsets.requires_grad = True
-            mesh_initial.vertices.requires_grad = True
+            #mesh_initial.vertices.requires_grad = True
 
-            optimizer_vertices = torch.optim.Adam([mesh_initial.vertices], lr=lr_vertices)
+            #optimizer_vertices = torch.optim.Adam([mesh_initial.vertices], lr=lr_vertices)
 
         # Deform the initial mesh
         #mesh = mesh_initial.with_vertices(mesh_initial.vertices + vertex_offsets)
-        mesh = mesh_initial
+        verts_out = ner(mesh_initial.vertices)
+        mesh = mesh_initial.with_vertices(verts_out)
         # Sample a view subset
         views_subset = view_sampler(views)
 
