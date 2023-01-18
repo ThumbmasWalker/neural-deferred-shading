@@ -10,6 +10,8 @@ from torch.nn.init import kaiming_uniform_
 from torch.nn import ReLU
 from torch.nn import Sigmoid
 from torch.nn.init import xavier_uniform_
+from torch import linalg as LA
+from torch.nn.functional import normalize
 from tqdm import tqdm
 from mesh_files.load_mesh import MESHES
 
@@ -48,11 +50,16 @@ if __name__ == '__main__':
     parser.add_argument('--weight_shading', type=float, default=1.0, help="Weight of the shading term")
     parser.add_argument('--shading_percentage', type=float, default=0.75, help="Percentage of valid pixels considered in the shading loss (0-1)")
     parser.add_argument('--hidden_features_layers', type=int, default=3, help="Number of hidden layers in the positional feature part of the neural shader")
+    parser.add_argument('--geo_hidden_features_layers', type=int, default=3, help="Number of hidden layers in the positional feature part of the neural shader")
     parser.add_argument('--hidden_features_size', type=int, default=256, help="Width of the hidden layers in the neural shader")
     parser.add_argument('--fourier_features', type=str, default='positional', choices=(['none', 'gfft', 'positional']), help="Input encoding used in the neural shader")
+    parser.add_argument('--geo_fourier_features', type=str, default='positional', choices=(['none', 'gfft', 'positional']), help="Input encoding used in the neural explicit rep")
     parser.add_argument('--activation', type=str, default='relu', choices=(['relu', 'sine']), help="Activation function used in the neural shader")
     parser.add_argument('--fft_scale', type=int, default=4, help="Scale parameter of frequency-based input encodings in the neural shader")
+    parser.add_argument('--geo_fft_scale', type=int, default=4, help="Scale parameter of frequency-based input encodings in the neural explicit rep")
     parser.add_argument('--uv_samps', type=int, default=100, help="Number of samples in UV space")
+    parser.add_argument('--stochastic', type=bool, default=False, help="stochastically sample input sphere")
+    parser.add_argument('--stochastic_sample_freq', type=int, default=200, help="number of iterations before resampling the sphere at a given resolution")
 
     # Add module arguments
     ViewSampler.add_arguments(parser)
@@ -83,106 +90,12 @@ if __name__ == '__main__':
     # Read the views
     views = read_views(args.input_dir, scale=args.image_scale, device=device)
 
-    # Neural Explicit Rep
-    '''
-    class MLP(Module):
-        def __init__(self, n_inputs):
-            super(MLP, self).__init__()
-            # First hidden layer
-            self.hidden1 = Linear(n_inputs, 10)
-            kaiming_uniform_(self.hidden1.weight, nonlinearity='relu')
-            self.act1 = ReLU()
-            # Second hidden layer
-            self.hidden2 = Linear(10, 10)
-            kaiming_uniform_(self.hidden2.weight, nonlinearity='relu')
-            self.act2 = ReLU()
-            # Third hidden layer
-            self.hidden3 = Linear(10,3)
-            xavier_uniform_(self.hidden3.weight)
-            self.act3 = Sigmoid()
-        def forward(self, X):
-            #Input to the first hidden layer
-            X = self.hidden1(X)
-            X = self.act1(X)
-            # Second hidden layer
-            X = self.hidden2(X)
-            X = self.act2(X)
-            # Third hidden layer
-            X = self.hidden3(X)
-            X = self.act3(X)
-            return X
-
-
-
-    ner = NeuralExplicit(hidden_features_layers=args.hidden_features_layers,
-                          hidden_features_size=10,
-                          fourier_features=args.fourier_features,
-                          activation=args.activation,
-                          fft_scale=args.fft_scale,
-                          last_activation=torch.nn.ReLU, 
-                          device=device)
-
-    ner = MLP(2).to(device)
-
-    # Get uv coordinate grid for neural input
-    uv_grid = create_uv_coordinate_grid(args.uv_samps, scale=0.1, device=device)
-    uv_grid = uv_grid.view(1, -1 , 2).squeeze()
-    verts = ner(uv_grid)
-    print(verts.shape)
-    # Compute Faces/Triangles
-    top_triangle_idx = torch.arange(0, args.uv_samps * (args.uv_samps - 1))
-    top_triangle_idx = torch.stack(
-        [
-            top_triangle_idx,
-            top_triangle_idx + 1,
-            top_triangle_idx + args.uv_samps + 1,
-        ],
-        dim=-1,
-    )
-
-    bottom_triangle_idx = top_triangle_idx[:, [0, 2, 1]] + torch.tensor(
-        [0, 0, args.uv_samps - 1]
-    )
-
-    faces = torch.zeros(
-        (1, len(top_triangle_idx) + len(bottom_triangle_idx), 3),
-        dtype=torch.long,
-        device=device,
-    )
-    faces[0, ::2] = top_triangle_idx
-    faces[0, 1::2] = bottom_triangle_idx
-
-    # construct range of indices that excludes the boundary to avoid wrong triangles
-    indexing_range = torch.arange(0, 2 * args.uv_samps * args.uv_samps).view(
-        args.uv_samps, args.uv_samps, 2
-    )
-    indexing_range = indexing_range[:-1, :-1]  # removes boundaries from list of indices
-    indexing_range = indexing_range.reshape(
-        2 * (args.uv_samps - 1) * (args.uv_samps - 1)
-    )
-
-    # Faces of checkerboard mesh
-    faces = faces[:, indexing_range].squeeze()
-    print(faces.shape)
-
-    mesh_initial = Mesh(verts, faces, device=device)
-    mesh_for_writing = mesh_initial.detach().to('cpu')
-    write_mesh(meshes_save_path / f"mesh_test.obj", mesh_for_writing)                                
-    exit(-1)'''
+    # load base icosahedron
     mesh = MESHES[4]
-    mesh_initial = Mesh(mesh['V'], mesh['F'], device=device)
-    # Obtain the initial mesh and compute its connectivity
-    #mesh_initial: Mesh = None
-    #if args.initial_mesh in mesh_generator_names:
-    #    # Use args.initial_mesh as mesh generator name
-    #    if args.input_bbox is None:
-    #        raise RuntimeError("Generated meshes require a bounding box.")
-    #    mesh_initial = generate_mesh(args.initial_mesh, views, AABB.load(args.input_bbox), device=device)
-    #else:
-    #    # Use args.initial_mesh as path to the mesh
-    #    mesh_initial = read_mesh(args.initial_mesh, device=device)
+    V = torch.tensor(mesh['V'], dtype=torch.float32, device=device)
+    mesh_initial = Mesh(V, mesh['F'], device=device)
     mesh_initial.compute_connectivity()
-
+      
     # Load the bounding box or create it from the mesh vertices
     if args.input_bbox is not None:
         aabb = AABB.load(args.input_bbox)
@@ -214,11 +127,11 @@ if __name__ == '__main__':
     #vertex_offsets = torch.zeros_like(mesh_initial.vertices)
     #vertex_offsets.requires_grad = True
 
-    ner = NeuralExplicit(hidden_features_layers=args.hidden_features_layers,
-                          hidden_features_size=256,
-                          fourier_features=args.fourier_features,
+    ner = NeuralExplicit(hidden_features_layers=args.geo_hidden_features_layers,
+                          hidden_features_size=args.hidden_features_size,
+                          fourier_features=args.geo_fourier_features,
                           activation=args.activation,
-                          fft_scale=args.fft_scale,
+                          fft_scale=args.geo_fft_scale,
                           last_activation=torch.nn.ReLU, 
                           device=device)
     
@@ -249,53 +162,58 @@ if __name__ == '__main__':
     losses = {k: torch.tensor(0.0, device=device) for k in loss_weights}
 
     progress_bar = tqdm(range(1, args.iterations + 1))
+    counter = 0
     for iteration in progress_bar:
         progress_bar.set_description(desc=f'Iteration {iteration}')
 
         if iteration in args.upsample_iterations:
-            # Upsample the mesh by remeshing the surface with half the average edge length
-            # e0, e1 = mesh.edges.unbind(1)
-            # average_edge_length = torch.linalg.norm(mesh.vertices[e0] - mesh.vertices[e1], dim=-1).mean()
-            # v_upsampled, f_upsampled = remesh_botsch(mesh.vertices.cpu().detach().numpy().astype(np.float64), mesh.indices.cpu().numpy().astype(np.int32), h=float(average_edge_length/2))
-            # v_upsampled = np.ascontiguousarray(v_upsampled)
-            # f_upsampled = np.ascontiguousarray(f_upsampled)
+
             mesh_lvls = {args.upsample_iterations[0]:5, 
                          args.upsample_iterations[1]:6, 
                          args.upsample_iterations[2]:7}
+
             mesh = MESHES[mesh_lvls[iteration]]
             mesh_initial = Mesh(mesh['V'], mesh['F'], device=device)
             mesh_initial.compute_connectivity()
-
             # Adjust weights and step size
             loss_weights['laplacian'] *= 4
             loss_weights['normal'] *= 4
             lr_vertices *= 0.75
 
-            # Create a new optimizer for the vertex offsets
-            #vertex_offsets = torch.zeros_like(mesh_initial.vertices)
-            #vertex_offsets.requires_grad = True
-            #mesh_initial.vertices.requires_grad = True
+        # stochastically sample the initial sphere
+        if (args.stochastic == True) and (counter == args.stochastic_sample_freq):
+            print("Stochastic Sampling")
+            V = torch.tensor(mesh['V'], dtype=torch.float32, device=device)
+            edge_length = LA.vector_norm(V[mesh['F'][0][0]] - V[mesh['F'][0][1]])
+            # displace vertices randomly, but dont overlap
+            noise = (torch.rand(mesh['nv'], 3, device=device)*2 - 1)*(edge_length/3)
+            V_stoch = V + noise
+            # reproject to sphere
+            V = torch.div(V_stoch, LA.vector_norm(V_stoch, dim=1).reshape(mesh['nv'], 1))
+            mesh_initial = mesh_initial.with_vertices(V)
 
-            #optimizer_vertices = torch.optim.Adam([mesh_initial.vertices], lr=lr_vertices)
+            mesh_for_writing = mesh_initial.detach().to('cpu')
+            write_mesh(meshes_save_path / f"mesh_test_stoch{iteration}.obj", mesh_for_writing)
 
-        # Deform the initial mesh
-        #mesh = mesh_initial.with_vertices(mesh_initial.vertices + vertex_offsets)
+            counter = 0
+
         verts_out = ner(mesh_initial.vertices)
-        mesh = mesh_initial.with_vertices(verts_out)
+
+        mesh_out = mesh_initial.with_vertices(verts_out)
         # Sample a view subset
         views_subset = view_sampler(views)
 
         # Render the mesh from the views
         # Perform antialiasing here because we cannot antialias after shading if we only shade a some of the pixels
-        gbuffers = renderer.render(views_subset, mesh, channels=['mask', 'position', 'normal'], with_antialiasing=True) 
+        gbuffers = renderer.render(views_subset, mesh_out, channels=['mask', 'position', 'normal'], with_antialiasing=True) 
 
         # Combine losses and weights
         if loss_weights['mask'] > 0:
             losses['mask'] = mask_loss(views_subset, gbuffers)
         if loss_weights['normal'] > 0:
-            losses['normal'] = normal_consistency_loss(mesh)
+            losses['normal'] = normal_consistency_loss(mesh_out)
         if loss_weights['laplacian'] > 0:
-            losses['laplacian'] = laplacian_loss(mesh)
+            losses['laplacian'] = laplacian_loss(mesh_out)
         if loss_weights['shading'] > 0:
             losses['shading'] = shading_loss(views_subset, gbuffers, shader=shader, shading_percentage=args.shading_percentage)
 
@@ -320,7 +238,7 @@ if __name__ == '__main__':
                 view_indices = args.visualization_views if use_fixed_views else [np.random.choice(list(range(len(views_subset))))]
                 for vi in view_indices:
                     debug_view = views[vi] if use_fixed_views else views_subset[vi]
-                    debug_gbuffer = renderer.render([debug_view], mesh, channels=['mask', 'position', 'normal'], with_antialiasing=True)[0]
+                    debug_gbuffer = renderer.render([debug_view], mesh_out, channels=['mask', 'position', 'normal'], with_antialiasing=True)[0]
                     position = debug_gbuffer["position"]
                     normal = debug_gbuffer["normal"]
                     view_direction = torch.nn.functional.normalize(debug_view.camera.center - position, dim=-1)
@@ -340,11 +258,11 @@ if __name__ == '__main__':
 
         if (args.save_frequency > 0) and (iteration == 1 or iteration % args.save_frequency == 0):
             with torch.no_grad():
-                mesh_for_writing = space_normalization.denormalize_mesh(mesh.detach().to('cpu'))
+                mesh_for_writing = space_normalization.denormalize_mesh(mesh_out.detach().to('cpu'))
                 write_mesh(meshes_save_path / f"mesh_{iteration:06d}.obj", mesh_for_writing)                                
             shader.save(shaders_save_path / f'shader_{iteration:06d}.pt')
-
-    mesh_for_writing = space_normalization.denormalize_mesh(mesh.detach().to('cpu'))
+        counter +=1
+    mesh_for_writing = space_normalization.denormalize_mesh(mesh_out.detach().to('cpu'))
     write_mesh(meshes_save_path / f"mesh_{args.iterations:06d}.obj", mesh_for_writing)
 
     if shader is not None:

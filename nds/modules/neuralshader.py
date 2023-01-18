@@ -21,8 +21,8 @@ class NeuralShader(torch.nn.Module):
         super().__init__()
         self.fourier_feature_transform = None
         if fourier_features == 'gfft':
-            self.fourier_feature_transform = GaussianFourierFeatureTransform(3, mapping_size=mapping_size//2, scale=fft_scale, device=device)
-            self.diffuse = FC(mapping_size, hidden_features_size, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
+            self.fourier_feature_transform = GaussianFourierFeatureTransform(3, mapping_size=fft_scale//2, scale=1, device=device)
+            self.diffuse = FC(fft_scale, hidden_features_size, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
             self.specular = FC(hidden_features_size+3+3, 3, [hidden_features_size // 2], activation, last_activation).to(device)
         elif fourier_features == 'positional':
             self.fourier_feature_transform, channels = get_embedder(fft_scale)
@@ -101,7 +101,11 @@ class NeuralExplicit(torch.nn.Module):
             print("positional encoding enabled")
             self.fourier_feature_transform, channels = get_embedder(fft_scale)
             self.mlp = FC(channels, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
-        else:    
+        elif fourier_features == 'gfft':
+            print("gfft enabled")
+            self.fourier_feature_transform = GaussianFourierFeatureTransform(3, mapping_size=mapping_size//2, scale=fft_scale, device=device)
+            self.mlp = FC(mapping_size, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
+        elif fourier_features == 'none':    
             self.mlp = FC(3, 3, [hidden_features_size] * hidden_features_layers, activation, None).to(device)
 
         # Store the config
@@ -126,7 +130,8 @@ class NeuralExplicit(torch.nn.Module):
         #    h = self.diffuse(position)
         #    h = torch.cat([h, normal, view_dir], dim=-1)
         if self.fourier_feature_transform is not None:
-            return self.mlp(self.fourier_feature_transform(coords))*0.1 + coords
+            encodings = self.fourier_feature_transform(coords)
+            return self.mlp(encodings)*0.01 + coords
         else: 
             return self.mlp(coords)*0.1 + coords
 

@@ -41,7 +41,7 @@ def find_connected_faces(indices):
     face_ids = torch.arange(indices.shape[0])               
     face_ids = torch.repeat_interleave(face_ids, 3, dim=0) # Tensor with the face id for each edge
 
-    face_correspondences = torch.zeros((counts.shape[0], 2), dtype=torch.int64)
+    face_correspondences = torch.zeros((counts.shape[0], 2), dtype=torch.int64, device=indices.device)
     face_correspondences_indices = torch.zeros(counts.shape[0], dtype=torch.int64)
 
     # ei = edge index
